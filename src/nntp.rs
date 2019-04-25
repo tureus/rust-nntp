@@ -1,8 +1,12 @@
 extern crate bufstream;
 use bufstream::BufStream;
 
-use std::collections::HashMap;
-use std::io::{Error, ErrorKind, Read, Result, Write};
+extern crate native_tls;
+
+#[macro_use] extern crate prettytable;
+use prettytable::Table;
+
+use std::io::{Error, ErrorKind, Read, Result, Write, BufRead};
 use std::net::TcpStream;
 use std::net::ToSocketAddrs;
 use std::str::FromStr;
@@ -23,42 +27,134 @@ const HELP: &'static [u8; 6] = b"HELP\r\n";
 const NEXT: &'static [u8; 6] = b"NEXT\r\n";
 const POST: &'static [u8; 6] = b"POST\r\n";
 const STAT: &'static [u8; 6] = b"STAT\r\n";
-
-/// Stream to be used for interfacing with a NNTP server.
-pub struct NNTPStream {
-    stream: BufStream<TcpStream>,
-}
+const ARTICLE_END : &'static [u8; 3] = b".\r\n";
 
 pub struct Article {
-    pub headers: HashMap<String, String>,
-    pub body: Vec<String>,
+    pub buf: Vec<u8>
 }
 
-impl Article<> {
-    pub fn new_article(lines: Vec<String>) -> Article {
-        let mut headers = HashMap::new();
-        let mut body = Vec::new();
-        let mut parsing_headers = true;
-
-        for i in lines.iter() {
-            if i.len() == 0 {
-                parsing_headers = false;
-                continue;
-            }
-            if parsing_headers {
-                let mut header : Vec<&str> = i.splitn(2, ':').collect();
-                headers.insert(header[0].to_owned(), header[1].to_owned());
-            } else {
-                body.push(i.clone());
-            }
-        }
-        Article {
-            headers: headers,
-            body: body,
-        }
+impl<'a> Article {
+    pub fn parse(&'a self) -> Result<ParsedArticle<'a>> {
+        ParsedArticle::from_buffer(&self.buf[..])
     }
 }
 
+pub struct ParsedArticle<'a> {
+    pub headers: ParsedHeaders<'a>,
+    pub body: &'a [u8],
+}
+
+impl<'a> ParsedArticle<'a> {
+    pub fn from_buffer(buf: &[u8]) -> Result<ParsedArticle> {
+        let (headers,buf) = ParsedHeaders::from_buffer(buf)?;
+
+        Ok(ParsedArticle {
+            headers,
+            body: buf
+        })
+    }
+}
+
+pub struct Headers {
+    buf: Vec<u8>
+}
+
+impl Headers {
+    pub fn size(&self) -> usize {
+        self.buf.len()
+    }
+
+    pub fn parse(&self) -> Result<ParsedHeaders> {
+        ParsedHeaders::from_buffer(&self.buf[..]).map(|(h,b)| h)
+    }
+}
+
+pub struct ParsedHeaders<'a> {
+    pub code: isize,
+    pub message: &'a str,
+    pub headers: Vec<(&'a str, &'a str)>,
+}
+
+impl<'a> std::fmt::Debug for ParsedHeaders<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "code: {}, message: {}\n", self.code, self.message)?;
+        let mut table = Table::new();
+        for (k,v) in self.headers.iter() {
+            if v.len() < 50 {
+                table.add_row(row![k,v]);
+            } else {
+                table.add_row(row![k, format!("{}...", &v[0..50]) ]);
+            }
+        }
+        table.printstd();
+        Ok(())
+    }
+}
+
+impl<'a> ParsedHeaders<'a> {
+    pub fn from_buffer(buf: &[u8]) -> Result<(ParsedHeaders, &[u8])> {
+        let mut buf = &buf[..];
+        let mut headers : Vec<(&str,&str)> = Vec::with_capacity(15);
+
+        // snag response line
+        let ((code,message), mut buf) = match ParsedHeaders::consume_line(buf) {
+            (line, Some(rest)) => (ParsedHeaders::parse_response(line)?, rest),
+            (_, None) => return Err(Error::new(ErrorKind::Other, "failed to consume a line")),
+        };
+
+        while let (line, Some(rest)) = ParsedHeaders::consume_line(buf) {
+            buf = rest;
+
+            if line.len() == 0 {
+                break
+            }
+
+            match line.iter().position(|&x| x == b':') {
+                Some(pos) => {
+                    headers.push((
+                        std::str::from_utf8(&line[0..pos]).expect("header key is not valid UTF8"),
+                        std::str::from_utf8(&line[pos+2..]).expect("header value is not valid UTF8")
+                    ));
+                },
+                None => {},
+            }
+        }
+
+        Ok((ParsedHeaders { headers, code, message }, buf))
+    }
+
+    fn consume_line(buffer: &[u8]) -> (&[u8], Option<&[u8]>) {
+        let mut windows = buffer.windows(2).enumerate();
+        let found = windows.find(|(window_index, search)| {
+            search == b"\r\n"
+        });
+        match found {
+            Some((offset, slice)) => {
+                let line = &buffer[0..offset];
+                if offset > buffer.len() {
+                    (line, None)
+                } else {
+                    (line, Some(&buffer[offset+2..]))
+                }
+            },
+            _ => {
+                (buffer, None)
+            }
+        }
+    }
+
+    fn parse_response(response: &[u8]) -> Result<(isize,&str)> {
+        let (code,message) = match response.iter().position(|&x| x == b' ') {
+            Some(pos) => response.split_at(pos),
+            None => return Err(Error::new(ErrorKind::Other, "could not find a space in the response line")),
+        };
+
+        let code: isize = FromStr::from_str(std::str::from_utf8(code).expect("bad UTF8 for code")).map_err(|_| Error::new(ErrorKind::Other, "failed to parse response code"))?;
+        Ok((code, std::str::from_utf8(&message[1..]).expect("message is not valid UTF8")))
+    }
+}
+
+#[derive(Debug)]
 pub struct NewsGroup {
     pub name: String,
     pub high: isize,
@@ -80,11 +176,15 @@ impl NewsGroup {
     }
 }
 
-impl NNTPStream {
+/// Stream to be used for interfacing with a NNTP server.
+pub struct NNTPStream<W: Read + Write> {
+    stream: BufStream<W>,
+}
+
+impl<W: Read + Write> NNTPStream<W> {
     /// Creates an NNTP Stream.
-    pub fn connect<A: ToSocketAddrs>(addr: A) -> Result<NNTPStream> {
-        let tcp_stream = TcpStream::connect(addr)?;
-        let mut socket = NNTPStream { stream: BufStream::new(tcp_stream) };
+    pub fn connect(bufsock: BufStream<W>) -> Result<NNTPStream<W>> {
+        let mut socket = NNTPStream { stream: bufsock };
 
         socket
             .read_response(200)
@@ -112,11 +212,45 @@ impl NNTPStream {
         self.write_all(article_command)
             .map(|_| Error::new(ErrorKind::Other, "Failed to retrieve article"))?;
 
-        let (_code, _first_line) = self.read_response(220).unwrap();
+        let buf = self.read_article_buffer()?;
 
-        let res = self.read_buffered_multiline_response()
-            .map(|ls| Article::new_article(ls));
-        res
+        let mut article = Article {
+            buf,
+        };
+
+        article.parse();
+
+        Ok(article)
+    }
+
+    fn read_article_buffer(&mut self) -> Result<Vec<u8>> {
+        let mut buffer = vec![0; 2048];
+        let mut bytes_read = 0;
+
+        loop {
+            match self.stream.read(&mut buffer[bytes_read..]) {
+                Ok(0) => {
+                    panic!("empty read")
+                },
+                Ok(bytes) => {
+                    bytes_read += bytes;
+                    if &buffer[bytes_read-3..bytes_read] == ARTICLE_END {
+                        // Don't pass on the rest of 0'd data, skip the ARTICLE_END
+                        buffer.truncate(bytes_read-3);
+                        break
+                    } else if buffer.len() == bytes_read {
+                        // we gotta resize this buffer
+                        let new_cap = buffer.capacity() * 2;
+                        buffer.resize(new_cap, 0);
+                        println!("read_article_buffer is resizing!")
+                    }
+                },
+                Err(_) => return Err(Error::new(ErrorKind::Other, "trouble reading the whole article")),
+            }
+
+        }
+
+        Ok(buffer)
     }
 
     /// Retrieves the body of the current article number in the currently selected newsgroup.
@@ -159,26 +293,26 @@ impl NNTPStream {
     }
 
     /// Retrieves the headers of the current article number in the currently selected newsgroup.
-    pub fn head(&mut self) -> Result<Vec<String>> {
+    pub fn head(&mut self) -> Result<Headers> {
         self.retrieve_head(HEAD)
     }
 
     /// Retrieves the headers of the article id.
-    pub fn head_by_id(&mut self, article_id: &str) -> Result<Vec<String>> {
+    pub fn head_by_id(&mut self, article_id: &str) -> Result<Headers> {
         self.retrieve_head(format!("HEAD {}\r\n", article_id).as_bytes())
     }
 
     /// Retrieves the headers of the article number in the currently selected newsgroup.
-    pub fn head_by_number(&mut self, article_number: isize) -> Result<Vec<String>> {
+    pub fn head_by_number(&mut self, article_number: isize) -> Result<Headers> {
         self.retrieve_head(format!("HEAD {}\r\n", article_number).as_bytes())
     }
 
-    fn retrieve_head(&mut self, head_command: &[u8]) -> Result<Vec<String>> {
+    fn retrieve_head(&mut self, head_command: &[u8]) -> Result<Headers> {
         self.write_all(head_command)?;
 
-        let (_code, _first_line) = self.read_response(221)?;
+        let buf = self.read_article_buffer()?;
 
-        self.read_buffered_multiline_response()
+        Ok(Headers{ buf })
     }
 
     /// Moves the currently selected article number back one
@@ -310,6 +444,16 @@ impl NNTPStream {
         self.retrieve_stat(format!("STAT {}\r\n", article_number).as_bytes())
     }
 
+    pub fn auth_info(&mut self, user: &str, pass: &str) -> Result<String> {
+        self.write_all(&format!("AUTHINFO USER {}\r\n", user).as_bytes()[..])?;
+
+        self.read_response(381).map(|(_code,message)| message)?;
+
+        self.write_all(&format!("AUTHINFO PASS {}\r\n", pass).as_bytes()[..])?;
+
+        self.read_response(281).map(|(_code,message)| message)
+    }
+
     fn write_all(&mut self, buf: &[u8]) -> Result<()> {
         self.stream.write_all(buf)?;
         self.stream.flush()
@@ -373,6 +517,7 @@ impl NNTPStream {
         let code: isize = FromStr::from_str(v[0]).unwrap();
         let message = v[1];
         if code != expected_code {
+            panic!("got code {}, expected {}, message: {}", code, expected_code, message);
             return Err(Error::new(ErrorKind::Other, "Invalid response"));
         }
 
@@ -400,17 +545,16 @@ impl NNTPStream {
     }
 }
 
-struct NNTPLines<'a> {
-    buf: &'a mut bufstream::BufStream<std::net::TcpStream>,
+struct NNTPLines<'a, W: Read + Write> {
+    buf: &'a mut BufStream<W>,
 }
 
 /// A reimplementation of the BufReader::lines method with
 /// some added logic for handling NNTP empty line signals
-impl<'a> Iterator for NNTPLines<'a> {
+impl<'a, W: Read + Write> Iterator for NNTPLines<'a, W> {
     type Item = Result<Vec<u8>>;
 
     fn next(&mut self) -> Option<Result<Vec<u8>>> {
-        use std::io::BufRead;
         let next = self.buf.lines().next();
         match next {
             Some(Ok(l)) => {
