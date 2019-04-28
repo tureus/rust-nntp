@@ -25,17 +25,20 @@ fn main() -> Result<(), std::io::Error> {
 //    let GROUP = "comp.sys.raspberry-pi";
     let GROUP = "alt.binaries.warez";
 
-    let capabilities = nntp_stream.capabilities()?;
-    println!("{:#?}", capabilities);
-
     use std::env;
     let envmap : HashMap<String,String> = env::vars().collect();
-    nntp_stream.auth_info(envmap.get("NEWSGROUP_USER").expect("newsgroup user"), envmap.get("NEWSGROUP_PASS").expect("newsgroup pass"))?;
+    nntp_stream.authinfo_user(envmap.get("NEWSGROUP_USER").expect("newsgroup user"))?;
+    nntp_stream.authinfo_pass(envmap.get("NEWSGROUP_PASS").expect("newsgroup pass"))?;
 
-    let groups = nntp_stream.list()?;
-    panic!("{:#?}", groups);
+    let cap = nntp_stream.capabilities()?;
+    panic!("cap (after AUTH): {:#?}", cap);
+
+//    let groups = nntp_stream.list()?;
 //    let groups_by_name : HashMap<&str, &NewsGroup> = groups.iter().map(|x| (&x.name[..], x)).collect();
 //
+//    let g = *groups_by_name.get(GROUP).unwrap();
+//    println!("the g: {:#?}", g);
+
 //    let mut t = Table::new();
 //    for (name,_) in groups_by_name.iter() {
 //        t.add_row(row![name]);
@@ -43,17 +46,41 @@ fn main() -> Result<(), std::io::Error> {
 //    t.printstd();
 //
     nntp_stream.group(GROUP)?;
+    let article = nntp_stream.article()?;
+    let stat = nntp_stream.stat()?;
+    panic!("stat: {}", stat);
+//    let article = nntp_stream.article_by_number(3269684000).unwrap();
+//    let article = article.parse()?;
+//    let mut t = Table::new();
+//    for (k,v) in article.headers.headers.iter() {
+//        t.add_row(row![k,v]);
+//    }
+//    t.printstd();
+//    println!("body size: {}", article.body.len());
 
+    let mut failure_count = 0;
+
+    println!("going through the group");
     while nntp_stream.next().is_ok() {
-        let headers = nntp_stream.head().unwrap();
-        // has it gone through more than one resize?
-        if headers.size() > 1024*2*2 {
-            // nothing
+        match nntp_stream.head() {
+            Ok(headers) => {
+                println!("parsing headers");
+                let parsed = headers.parse()?;
+                println!("{:?}", parsed);
+                println!("code: {}, message: {}", parsed.code, parsed.message);
+                println!("bleep: {:?}", parsed.headers[0])
+            },
+            Err(e) => {
+                failure_count += 1;
+                if failure_count > 3 {
+                    panic!("too many failures");
+                }
+                println!("error {}...", e);
+                continue
+            },
         }
-        let parsed = headers.parse()?;
-        println!("{:?}", parsed);
-        println!("code: {}, message: {}", parsed.code, parsed.message);
-        println!("bleep: {:?}", parsed.headers[0])
+
+
     }
 
     let last_response = nntp_stream.next()?;

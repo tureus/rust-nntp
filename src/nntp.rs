@@ -1,9 +1,4 @@
-extern crate bufstream;
 use bufstream::BufStream;
-
-extern crate native_tls;
-
-#[macro_use] extern crate prettytable;
 use prettytable::Table;
 
 use std::io::{Error, ErrorKind, Read, Result, Write, BufRead};
@@ -12,7 +7,6 @@ use std::net::ToSocketAddrs;
 use std::str::FromStr;
 use std::string::String;
 use std::vec::Vec;
-
 
 /// Commands
 const LIST: &'static [u8; 6] = b"LIST\r\n";
@@ -181,6 +175,18 @@ pub struct NNTPStream<W: Read + Write> {
     stream: BufStream<W>,
 }
 
+/// Response owns the blob returned by the server,
+/// including unparsed response, headers, body
+pub struct NNTPMessage {
+    buf: Vec<u8>
+}
+
+impl NNTPMessage {
+    pub fn parse(&self) -> (isize,&[u8],Option<&[u8]>,Option<&[u8]>) {
+        unimplemented!("bang")
+    }
+}
+
 impl<W: Read + Write> NNTPStream<W> {
     /// Creates an NNTP Stream.
     pub fn connect(bufsock: BufStream<W>) -> Result<NNTPStream<W>> {
@@ -234,6 +240,9 @@ impl<W: Read + Write> NNTPStream<W> {
                 },
                 Ok(bytes) => {
                     bytes_read += bytes;
+                    println!("got {} bytes", bytes);
+                    println!("buff: {}", std::str::from_utf8(&buffer[0..bytes_read]).unwrap());
+
                     if &buffer[bytes_read-3..bytes_read] == ARTICLE_END {
                         // Don't pass on the rest of 0'd data, skip the ARTICLE_END
                         buffer.truncate(bytes_read-3);
@@ -309,6 +318,8 @@ impl<W: Read + Write> NNTPStream<W> {
 
     fn retrieve_head(&mut self, head_command: &[u8]) -> Result<Headers> {
         self.write_all(head_command)?;
+
+        self.read_response(100)?;
 
         let buf = self.read_article_buffer()?;
 
@@ -444,11 +455,13 @@ impl<W: Read + Write> NNTPStream<W> {
         self.retrieve_stat(format!("STAT {}\r\n", article_number).as_bytes())
     }
 
-    pub fn auth_info(&mut self, user: &str, pass: &str) -> Result<String> {
+    pub fn authinfo_user(&mut self, user: &str) -> Result<String> {
         self.write_all(&format!("AUTHINFO USER {}\r\n", user).as_bytes()[..])?;
 
-        self.read_response(381).map(|(_code,message)| message)?;
+        self.read_response(381).map(|(_code, message)| message)
+    }
 
+    pub fn authinfo_pass(&mut self, pass: &str) -> Result<String> {
         self.write_all(&format!("AUTHINFO PASS {}\r\n", pass).as_bytes()[..])?;
 
         self.read_response(281).map(|(_code,message)| message)
@@ -460,9 +473,7 @@ impl<W: Read + Write> NNTPStream<W> {
     }
 
     fn retrieve_stat(&mut self, stat_command: &[u8]) -> Result<String> {
-        self.stream
-            .write_all(stat_command)
-            .map_err(|_| Error::new(ErrorKind::Other, "Write Error"))?;
+        self.write_all(stat_command)?;
 
         self.read_response(223).map(|(_, message)| message)
     }
@@ -488,6 +499,7 @@ impl<W: Read + Write> NNTPStream<W> {
 
     //Retrieve single line response
     fn read_response(&mut self, expected_code: isize) -> Result<(isize, String)> {
+//        println!("reading a new response...");
         //Carriage return
         let cr: u8 = b'\r';
         //Line Feed
@@ -503,8 +515,11 @@ impl<W: Read + Write> NNTPStream<W> {
             self.stream
                 .read(byte_buffer)
                 .map_err(|_| Error::new(ErrorKind::Other, "Error reading response"))?;
+
             line_buffer.push(byte_buffer[0]);
         }
+
+//        println!("done reading response from socket...");
 
         let response = String::from_utf8(line_buffer).unwrap();
         let chars_to_trim: &[char] = &['\r', '\n'];
@@ -517,7 +532,7 @@ impl<W: Read + Write> NNTPStream<W> {
         let code: isize = FromStr::from_str(v[0]).unwrap();
         let message = v[1];
         if code != expected_code {
-            panic!("got code {}, expected {}, message: {}", code, expected_code, message);
+            panic!("expected {}, got {}", expected_code, code);
             return Err(Error::new(ErrorKind::Other, "Invalid response"));
         }
 

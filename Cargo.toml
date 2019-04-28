@@ -12,11 +12,3 @@ license = "MIT OR Apache-2.0"
 bufstream = "0.1"
 prettytable-rs = "0.8.0"
 native-tls = "0.2.2"
-
-[lib]
-name = "nntp"
-path = "src/nntp.rs"
-
-[[bin]]
-name = "example"
-path = "example.rs"
