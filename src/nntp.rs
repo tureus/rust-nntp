@@ -224,7 +224,7 @@ impl<W: Read + Write> NNTPStream<W> {
             buf,
         };
 
-        article.parse();
+        article.parse().expect("parse article");
 
         Ok(article)
     }

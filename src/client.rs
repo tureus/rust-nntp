@@ -27,9 +27,23 @@ macro_rules! simple_command_and_check_code {
         pub fn $fnname (&mut self) -> Result<Response> {
             self.stream.write_all($command)?;
 
-            let response = self.read_response();
-            assert!(response.as_ref().unwrap().expected($code));
-            response
+            match self.read_response() {
+                Ok(resp) => {
+                    if !resp.expected($code) {
+                        println!("expected {}, got {}", $code, &resp.response_line[0..3])
+                    }
+                    Ok(resp)
+                },
+                Err(e) => {
+                    panic!("got {}", e);
+                    Err(e)
+                }
+            }
+//            if let Some(ref resp) =  {
+//                if
+//            }
+//            assert!(response.as_ref().unwrap().expected($code));
+//            response
         }
     }
 }
@@ -40,12 +54,6 @@ macro_rules! utf8_plz {
     }
 }
 
-pub struct Greeting {
-    response: String,
-}
-
-
-
 pub struct Client<W: Read + Write> {
     pub stream: Stream<W>,
     pub capabilities: Option<Vec<Capability>>,
@@ -54,6 +62,10 @@ pub struct Client<W: Read + Write> {
 impl<W: Read + Write> Client<W> {
     pub fn new(stream: Stream<W>) -> Client<W> {
         Client{ stream, capabilities: None }
+    }
+
+    pub fn flush_pipeline(&mut self) -> Result<()> {
+        self.stream.flush()
     }
 
     pub fn discovery_capabilities(&mut self) -> Result<()> {
@@ -146,16 +158,12 @@ impl<W: Read + Write> Client<W> {
 
     /// Lists articles in a group, you probably don't want this
     pub fn article_by_id(&mut self, id: usize) -> Result<Response> {
-        self.article_by_id_pipeline(id)?;
+        self.article_by_id_pipeline_write(id)?;
         self.article_by_id_pipeline_read()
     }
 
-    pub fn flush_pipeline(&mut self) -> Result<()> {
-        self.stream.flush()
-    }
-
     /// Lists articles in a group, you probably don't want this
-    pub fn article_by_id_pipeline(&mut self, id: usize) -> Result<()> {
+    pub fn article_by_id_pipeline_write(&mut self, id: usize) -> Result<()> {
         self.stream.write_all(&format!("ARTICLE {}\r\n", id)[..])
     }
 
@@ -172,18 +180,83 @@ impl<W: Read + Write> Client<W> {
 
         Ok(response)
     }
+
+    pub fn xfeature_compress_gzip(&mut self) -> Result<Response> {
+        self.stream.write_all(&format!("XFEATURE COMPRESS GZIP *\r\n")[..]);
+
+        let mut response = self.read_response()?;
+
+        // If it's not a 220, we shouldn't bother reading the rest
+        if !response.response_line.starts_with("220") {
+            return Ok(response)
+        }
+
+        let rest = self.stream.read_to_terminal()?;
+        response.rest.replace(rest);
+
+        Ok(response)
+    }
+
+    /// Retrieves the headers of the article id.
+    pub fn head_by_id(&mut self, article_id: usize) -> Result<Response> {
+        self.head_by_id_pipeline_write(article_id)?;
+        self.head_by_id_read_pipeline()
+    }
+
+    pub fn head_by_id_pipeline_write(&mut self, article_id: usize) -> Result<()> {
+        self.stream.write_all(&format!("HEAD {}\r\n", article_id)[..])
+    }
+
+    pub fn head_by_range_pipeline_write(&mut self, articles: std::ops::Range<usize>) -> Result<()> {
+        self.stream.write_all(&format!("HEAD {}-{}\r\n", articles.start, articles.end)[..])
+    }
+
+    pub fn xzhdr_by_id_pipeline_write(&mut self, article_id: usize) -> Result<()> {
+        self.stream.write_all(&format!("XZHDR {}\r\n", article_id)[..])
+    }
+
+    pub fn head_by_id_read_pipeline(&mut self) -> Result<Response> {
+        let mut response = self.read_response()?;
+
+        // If it's not a 100, we shouldn't bother reading the rest
+        if !(response.response_line.starts_with("100") || response.response_line.starts_with("221")) {
+//            panic!("no me gusta `{}`", response.response_line);
+            return Ok(response)
+        }
+
+        let rest = self.stream.read_to_terminal_noisey()?;
+        response.rest.replace(rest);
+
+        Ok(response)
+    }
+
+    pub fn xzhdr_by_id_read_pipeline(&mut self) -> Result<Response> {
+        let mut response = self.read_response()?;
+        println!("response: {:#?}", response);
+
+        // If it's not a 100, we shouldn't bother reading the rest
+        if !(response.response_line.starts_with("100") || response.response_line.starts_with("221")) {
+//            panic!("no me gusta `{}`", response.response_line);
+            return Ok(response)
+        }
+
+        let rest = self.stream.read_to_terminal_noisey()?;
+        response.rest.replace(rest);
+
+        Ok(response)
+    }
 }
 
 use std::fmt::{ Debug, Formatter, Result as FmtResult };
 impl Debug for Client<TlsStream<TcpStream>> {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        f.debug_struct("Client").field("stream", &"TlsStream<TcpStream>").field("capabilities", &self.capabilities).finish()
+        f.debug_struct("Client").field("stream", &self.stream).field("capabilities", &self.capabilities).finish()
     }
 }
 
 impl Debug for Client<TcpStream> {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        f.debug_struct("Client").field("stream", &"TcpStream").field("capabilities", &self.capabilities).finish()
+        f.debug_struct("Client").field("stream", &self.stream).field("capabilities", &self.capabilities).finish()
     }
 }
 
@@ -198,8 +271,8 @@ impl Client<TcpStream> {
 
 impl Client<TlsStream<TcpStream>> {
     /// Helper to easily connect to a TLS host
-    pub fn connect_tls(host: &str, port: u16) -> Result<Client<TlsStream<TcpStream>>> {
-        let stream = Stream::connect_tls(host,port)?;
+    pub fn connect_tls(host: &str, port: u16, buf_size: usize) -> Result<Client<TlsStream<TcpStream>>> {
+        let stream = Stream::connect_tls(host,port, buf_size)?;
 
         Ok(Client::new(stream))
     }

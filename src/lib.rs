@@ -1,6 +1,7 @@
 extern crate bufstream;
 extern crate native_tls;
 #[macro_use] extern crate prettytable;
+#[macro_use] extern crate log;
 
 /// Classic code for reference
 mod nntp;

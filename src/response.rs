@@ -6,6 +6,8 @@ pub struct Response {
     pub rest: Option<Vec<u8>>
 }
 
+const SUCCESS_CODES: [&'static str; 1] = ["221"];
+
 impl Response {
     pub fn new(response_line: String, rest: Option<Vec<u8>>) -> Response {
         Response{ response_line, rest }
@@ -13,6 +15,10 @@ impl Response {
 
     pub fn expected(&self, expected: &str) -> bool {
         self.response_line.starts_with(expected)
+    }
+
+    pub fn success(&self) -> bool {
+        SUCCESS_CODES.iter().any(|&x| self.response_line.starts_with(x))
     }
 
     /// After issuing a `GROUP $NAME` command you will get a response with three numbers,
@@ -41,5 +47,11 @@ impl Response {
         } else {
             Ok((parts[0], parts[1], parts[2]))
         }
+    }
+
+    pub fn parse_header(&self) -> Result<Vec<(&[u8], &[u8])>> {
+        let subbuf = &self.rest.as_ref().unwrap()[0..100];
+        panic!("subbuf: {:?}", subbuf);
+        unimplemented!()
     }
 }
