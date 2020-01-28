@@ -30,7 +30,7 @@ macro_rules! simple_command_and_check_code {
 
             let response_line = self.read_response_line();
 
-            match response_line {
+            let line: Result<String,NNTPError> = match response_line {
                 Ok(resp) => {
                     if !resp.starts_with($code) {
                         println!("expected {}, got {}", $code, &resp[0..3])
@@ -40,7 +40,11 @@ macro_rules! simple_command_and_check_code {
                 Err(e) => {
                     panic!("got {:?}", e);
                 }
-            }
+            };
+
+            let rest = self.stream.read_to_terminal().unwrap();
+            unimplemented!("rest: {}", String::from_utf8(rest).unwrap());
+            Ok("hi".to_string())
         }
     }
 }
@@ -63,6 +67,10 @@ impl<W: Read + Write> Client<W> {
             stream,
             capabilities: None,
         }
+    }
+
+    pub fn flush(&mut self) -> Result<(), NNTPError> {
+        self.stream.flush()
     }
 
     #[inline]
@@ -147,7 +155,7 @@ impl<W: Read + Write> Client<W> {
 
     simple_command_and_check_code!(head, HEAD, "205");
     simple_command_and_check_code!(quit, QUIT, "205");
-    simple_command_and_check_code!(list, LIST, "205");
+    simple_command_and_check_code!(list, LIST, "215");
     simple_command_and_check_code!(next, NEXT, "223");
     simple_command_and_check_code!(last, LAST, "205");
 
@@ -160,12 +168,20 @@ impl<W: Read + Write> Client<W> {
         Ok(Response::new(response, None))
     }
 
+    //    pub fn list(&mut self) -> Result<Response, NNTPError> {
+    //        self.stream.write_all("LIST\r\n")?;
+    //
+    //        let response = self.read_response_line()?;
+    //        panic!("response: {}", response);
+    //    }
+
     /// Lists articles in a group, you probably don't want this
     pub fn listgroup(&mut self) -> Result<Response, NNTPError> {
         self.stream.write_all(&format!("LISTGROUP\r\n")[..])?;
 
         let response = self.read_response_line()?;
-        let _rest = self.stream.read_to_terminal()?;
+        info!("listgroup response line `{}`", response);
+        let _rest = self.stream.read_to_terminal_noisey()?;
         //        panic!("response: {:#?}/{}", response, rest.len());
 
         Ok(Response::new(response, None))
@@ -241,7 +257,7 @@ impl<W: Read + Write> Client<W> {
 
     pub fn head_by_id_pipeline_write(&mut self, article_id: usize) -> Result<(), NNTPError> {
         self.stream
-            .write_all(&format!("HEAD {}\r\n", article_id)[..])
+            .write_all_buffered(&format!("HEAD {}\r\n", article_id)[..])
             .map_err(|e| e.into())
     }
 

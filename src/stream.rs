@@ -50,7 +50,11 @@ where
     pub fn connect(host: &str, port: u16) -> Result<Stream<TcpStream>, NNTPError> {
         let tcp_stream = TcpStream::connect((host, port))?;
 
-        Ok(Stream::new(BufStream::new(tcp_stream)))
+        Ok(Stream::new(BufStream::with_capacities(
+            64 * 1024,
+            64 * 1024,
+            tcp_stream,
+        )))
     }
 }
 
@@ -102,17 +106,21 @@ impl<W: Read + Write> Stream<W> {
     }
 
     pub fn write_all(&mut self, command: &str) -> Result<(), NNTPError> {
+        self.write_all_buffered(command)?;
+        self.flush()
+    }
+
+    pub fn write_all_buffered(&mut self, command: &str) -> Result<(), NNTPError> {
         debug!("{}", command.trim());
         let bytes = command.as_bytes();
         self.bytes_written += bytes.len();
-        self.stream.write_all(bytes)?;
-        self.flush()
+        self.stream.write_all(bytes).map_err(|e| e.into())
     }
 
     /// Reads the first line sent back after issuing a command
     /// Per the RFC, this line is guaranteed to be UTF8 compatible
     pub fn read_response_line(&mut self) -> Result<String, NNTPError> {
-        info!("read response line");
+        trace!("read response line");
         //        let mut buffer = String::with_capacity(32);
         self.stream
             .read_line(&mut self.str_buf)
@@ -149,7 +157,7 @@ impl<W: Read + Write> Stream<W> {
 
     /// Reads from the buffer through to the terminal "\r\n.\r\n"
     pub fn read_to_terminal(&mut self) -> Result<Vec<u8>, NNTPError> {
-        info!("read_to_terminal");
+        trace!("read_to_terminal");
 
         // Looks for a terminal by comparing the end of the buffer
         // after every `\n` character. On the terminal `\r\n.\r\n`
@@ -178,7 +186,7 @@ impl<W: Read + Write> Stream<W> {
 
     /// Reads from the buffer through to the terminal "\r\n.\r\n"
     pub fn read_to_terminal_noisey(&mut self) -> Result<Vec<u8>, NNTPError> {
-        info!("read_to_terminal_noisey");
+        trace!("read_to_terminal_noisey");
         let mut iterations = 0;
         // Looks for a terminal by comparing the end of the buffer
         // after every `\n` character. On the terminal `\r\n.\r\n`
@@ -201,7 +209,7 @@ impl<W: Read + Write> Stream<W> {
         let res = self.buf.clone();
         self.buf.clear();
 
-        info!(
+        trace!(
             "read_to_terminal_noisey loops: {}, bytes_read: {}",
             iterations,
             res.len()

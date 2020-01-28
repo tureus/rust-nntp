@@ -1,4 +1,4 @@
-pub struct Headers<'a>(std::collections::HashMap<&'a [u8], Option<&'a [u8]>>);
+pub struct Headers<'a>(pub std::collections::HashMap<&'a [u8], Option<&'a [u8]>>);
 
 impl<'a> From<&'a str> for Headers<'a> {
     fn from(headers: &'a str) -> Self {
