@@ -11,11 +11,13 @@ use pretty_bytes::converter::convert;
 
 /// Stream to be used for interfacing with a NNTP server.
 pub struct Stream<W: Read + Write> {
-    pub stream: BufStream<W>,
+    stream: BufStream<W>,
     bytes_read: usize,
     bytes_written: usize,
     started_at: std::time::Instant,
-    pub gzip: bool,
+    gzip: bool,
+    buf: Vec<u8>,
+    str_buf: String,
 }
 
 impl std::fmt::Debug for Stream<TcpStream> {
@@ -82,7 +84,17 @@ impl<W: Read + Write> Stream<W> {
             bytes_written: 0,
             started_at: std::time::Instant::now(),
             gzip: false,
+            buf: Vec::with_capacity(1024 * 32), // 4kb buffer
+            str_buf: String::with_capacity(128),
         }
+    }
+
+    pub fn gzip(&self) -> bool {
+        self.gzip
+    }
+
+    pub fn set_gzip(&mut self) {
+        self.gzip = true;
     }
 
     pub fn flush(&mut self) -> Result<(), NNTPError> {
@@ -101,15 +113,13 @@ impl<W: Read + Write> Stream<W> {
     /// Per the RFC, this line is guaranteed to be UTF8 compatible
     pub fn read_response_line(&mut self) -> Result<String, NNTPError> {
         info!("read response line");
-        let mut buffer = String::with_capacity(32);
-        let line = self
-            .stream
-            .read_line(&mut buffer)
-            .map(|_| {
-                self.bytes_read += buffer.len();
-                buffer
+        //        let mut buffer = String::with_capacity(32);
+        self.stream
+            .read_line(&mut self.str_buf)
+            .map(|read| {
+                self.bytes_read += read;
             })
-            .map_err(|_e| NNTPError::ReadLineFailed);
+            .map_err(|_e| NNTPError::ReadLineFailed)?;
 
         //        let mut buf = [0u8; 4 * 1024];
         if self.gzip {
@@ -132,13 +142,14 @@ impl<W: Read + Write> Stream<W> {
             //            panic!("{}", blob);
         }
 
-        line
+        let res = self.str_buf.clone();
+        self.str_buf.clear();
+        Ok(res)
     }
 
     /// Reads from the buffer through to the terminal "\r\n.\r\n"
     pub fn read_to_terminal(&mut self) -> Result<Vec<u8>, NNTPError> {
-        let mut bytes_read = 0;
-        let mut buffer = Vec::with_capacity(1024 * 4); // 4kb buffer
+        info!("read_to_terminal");
 
         // Looks for a terminal by comparing the end of the buffer
         // after every `\n` character. On the terminal `\r\n.\r\n`
@@ -146,61 +157,56 @@ impl<W: Read + Write> Stream<W> {
         // will take the minimum from the buffer, leaving pipelined
         // messages ready for future reads.
         loop {
-            let read_in_loop = self.stream.read_until(b'\n', &mut buffer)?;
+            let read = self.stream.read_until(b'\n', &mut self.buf)?;
 
-            bytes_read += read_in_loop;
-            self.bytes_read += bytes_read;
+            self.bytes_read += read;
 
-            debug!("length: {}, terminator {:?}", buffer.len(), b".\r\n");
-            debug!("{:?}", buffer);
-
-            if &buffer[bytes_read - 3..bytes_read] == b".\r\n" {
+            if &self.buf[self.buf.len() - 3..self.buf.len()] == b".\r\n" {
                 debug!("breaking...");
                 break;
             }
         }
 
-        let len = buffer.len();
-        buffer.truncate(len - 5);
+        let len = self.buf.len();
+        self.buf.truncate(len - 5);
 
-        Ok(buffer)
+        let res = self.buf.clone();
+        self.buf.clear();
+
+        Ok(res)
     }
 
     /// Reads from the buffer through to the terminal "\r\n.\r\n"
     pub fn read_to_terminal_noisey(&mut self) -> Result<Vec<u8>, NNTPError> {
-        let mut bytes_read = 0;
-        let mut buffer = Vec::with_capacity(1024 * 4); // 4kb buffer
-                                                       //        let mut buffer = vec![0; 1024 * 4]; // INITIALIZED 4kb buffer
-
-        //        loop {
-        //            let res = self.stream.read(&mut buffer).expect("noisey read");
-        //            if res > 0 {
-        //                trace!("buf: {:#?}", &buffer[0..res]);
-        //            }
-        //            std::thread::sleep(std::time::Duration::from_secs(1));
-        //        }
-
+        info!("read_to_terminal_noisey");
+        let mut iterations = 0;
         // Looks for a terminal by comparing the end of the buffer
         // after every `\n` character. On the terminal `\r\n.\r\n`
         // it'll actually search based on both of the `\n`. This behavior
         // will take the minimum from the buffer, leaving pipelined
         // messages ready for future reads.
         loop {
-            let read_in_loop = self.stream.read_until(b'\n', &mut buffer)?;
+            let read = self.stream.read_until(b'\n', &mut self.buf)?;
+            iterations += 1;
 
-            bytes_read += read_in_loop;
-            self.bytes_read += bytes_read;
+            self.bytes_read += read;
 
-            //            info!("I'm looking for {:?}", b"\r\n.\r\n");
-            //            info!("buf: {:?}", buffer);
-            if &buffer[bytes_read - 5..bytes_read] == b"\r\n.\r\n" {
+            if &self.buf[self.buf.len() - 5..self.buf.len()] == b"\r\n.\r\n" {
                 break;
             }
         }
 
-        let len = buffer.len();
-        buffer.truncate(len - 5);
+        let len = self.buf.len();
+        self.buf.truncate(len - 5);
+        let res = self.buf.clone();
+        self.buf.clear();
 
-        Ok(buffer)
+        info!(
+            "read_to_terminal_noisey loops: {}, bytes_read: {}",
+            iterations,
+            res.len()
+        );
+
+        Ok(res)
     }
 }

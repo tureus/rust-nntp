@@ -10,7 +10,7 @@ use super::response::Response;
 use super::stream::Stream;
 
 const LIST: &'static str = "LIST\r\n";
-//const CAPABILITIES: &'static [u8; 14] = b"CAPABILITIES\r\n";
+const CAPABILITIES: &'static str = "CAPABILITIES\r\n";
 //const ARTICLE: &'static [u8; 9] = b"ARTICLE\r\n";
 //const BODY: &'static [u8; 6] = b"BODY\r\n";
 //const DATE: &'static [u8; 6] = b"DATE\r\n";
@@ -25,26 +25,22 @@ const NEXT: &'static str = "NEXT\r\n";
 
 macro_rules! simple_command_and_check_code {
     ($fnname:ident, $command:expr, $code:expr) => {
-        pub fn $fnname (&mut self) -> Result<Response, NNTPError> {
+        pub fn $fnname (&mut self) -> Result<String, NNTPError> {
             self.stream.write_all($command)?;
 
-            match self.read_response() {
+            let response_line = self.read_response_line();
+
+            match response_line {
                 Ok(resp) => {
-                    if !resp.expected($code) {
-                        println!("expected {}, got {}", $code, &resp.response_line[0..3])
+                    if !resp.starts_with($code) {
+                        println!("expected {}, got {}", $code, &resp[0..3])
                     }
                     Ok(resp)
                 },
                 Err(e) => {
                     panic!("got {:?}", e);
-//                    Err(e)
                 }
             }
-//            if let Some(ref resp) =  {
-//                if
-//            }
-//            assert!(response.as_ref().unwrap().expected($code));
-//            response
         }
     }
 }
@@ -69,26 +65,32 @@ impl<W: Read + Write> Client<W> {
         }
     }
 
-    pub fn flush_pipeline(&mut self) -> Result<(), NNTPError> {
-        self.stream.flush().map_err(|e| e.into())
+    #[inline]
+    pub fn read_response_line(&mut self) -> Result<String, NNTPError> {
+        self.stream.read_response_line()
     }
 
+    #[allow(unreachable_code)]
     pub fn discovery_capabilities(&mut self) -> Result<(), NNTPError> {
-        self.stream.write_all("CAPABILITIES\r\n")?;
-        let mut response = self.read_response()?;
-        assert_eq!(&response.response_line[0..3], "101");
+        self.stream.write_all(CAPABILITIES)?;
+        //        let mut response = self.read_response()?;
+        let response_line = self.read_response_line()?;
+        assert_eq!(&response_line[0..3], "101");
 
-        response.rest = Some(self.stream.read_to_terminal()?);
+        let body = self.stream.read_to_terminal()?;
+        let body = String::from_utf8(body)?;
+
+        let response = Response::new(response_line, Some(body));
 
         use std::str::from_utf8;
 
-        let mut output = [0u8; 8 * 1024];
-        let rest = if self.stream.gzip {
-            let rest = response.rest.as_ref().unwrap();
+        let output = [0u8; 8 * 1024];
+        let rest = if self.stream.gzip() {
+            let rest: String = unimplemented!("hmm");
 
             let mut decompressor = flate2::Decompress::new(true);
             let _flat_response = decompressor
-                .decompress(&rest[..], &mut output[..], FlushDecompress::None)
+                .decompress(rest.as_bytes(), &mut output[..], FlushDecompress::None)
                 .expect("hello deflation");
 
             debug!("total out: {}", decompressor.total_out());
@@ -96,7 +98,8 @@ impl<W: Read + Write> Client<W> {
             from_utf8(&output[0..decompressor.total_out() as usize])
                 .expect("valid utf8 for gzipped capabilities")
         } else {
-            from_utf8(&response.rest.as_ref().unwrap()[..]).expect("valid utf8 for capabilities")
+            //            response.body().unwrap()
+            response.raw_headers()?
         };
 
         let caps: Vec<Capability> = rest.lines().map(|x| x.into()).collect();
@@ -125,29 +128,21 @@ impl<W: Read + Write> Client<W> {
         }
     }
 
-    /// Reads the first line response from the remote server.
-    pub fn read_response(&mut self) -> Result<Response, NNTPError> {
-        let response_line = self.stream.read_response_line()?;
-        Ok(Response::new(response_line, None))
-    }
-
     pub fn authinfo_user(&mut self, user: &str) -> Result<Response, NNTPError> {
         self.stream
             .write_all(&format!("AUTHINFO USER {}\r\n", user)[..])?;
 
-        let response = self.read_response();
-        assert!(response.as_ref().unwrap().expected("381"));
+        let response_line = self.read_response_line()?;
 
-        response
+        Ok(Response::new(response_line, None))
     }
 
     pub fn authinfo_pass(&mut self, pass: &str) -> Result<Response, NNTPError> {
         self.stream
             .write_all(&format!("AUTHINFO PASS {}\r\n", pass)[..])?;
 
-        let response = self.read_response();
-        assert!(response.as_ref().unwrap().expected("281"));
-        response
+        let response = self.read_response_line()?;
+        Ok(Response::new(response, None))
     }
 
     simple_command_and_check_code!(head, HEAD, "205");
@@ -160,22 +155,20 @@ impl<W: Read + Write> Client<W> {
     pub fn group(&mut self, group: &str) -> Result<Response, NNTPError> {
         self.stream.write_all(&format!("GROUP {}\r\n", group)[..])?;
 
-        let response = self.read_response();
-        assert!(response.as_ref().unwrap().expected("211"));
+        let response = self.read_response_line()?;
 
-        response
+        Ok(Response::new(response, None))
     }
 
     /// Lists articles in a group, you probably don't want this
     pub fn listgroup(&mut self) -> Result<Response, NNTPError> {
         self.stream.write_all(&format!("LISTGROUP\r\n")[..])?;
 
-        let response = self.read_response();
+        let response = self.read_response_line()?;
         let _rest = self.stream.read_to_terminal()?;
         //        panic!("response: {:#?}/{}", response, rest.len());
-        assert!(response.as_ref().unwrap().expected("211"));
 
-        response
+        Ok(Response::new(response, None))
     }
 
     /// Lists articles in a group based on the provided range, you probably don't want this
@@ -187,17 +180,11 @@ impl<W: Read + Write> Client<W> {
         let command = format!("LISTGROUP {} {}-{}\r\n", group, thing.start, thing.end);
         self.stream.write_all(&command[..])?;
 
-        let response = self.read_response();
-        println!("got response: {}", response.as_ref().unwrap().response_line);
+        let response = self.read_response_line()?;
+        println!("got response: {:?}", response);
         let _rest = self.stream.read_to_terminal()?;
-        //        panic!(
-        //            "response: {:#?}\n\n{}",
-        //            response,
-        //            std::str::from_utf8(&rest[..]).unwrap()
-        //        );
-        assert!(response.as_ref().unwrap().expected("211"));
 
-        response
+        Ok(Response::new(response, None))
     }
 
     /// Lists articles in a group, you probably don't want this
@@ -214,39 +201,36 @@ impl<W: Read + Write> Client<W> {
     }
 
     pub fn article_by_id_pipeline_read(&mut self) -> Result<Response, NNTPError> {
-        let mut response = self.read_response()?;
+        let response = self.read_response_line()?;
 
         // If it's not a 220, we shouldn't bother reading the rest
-        if !response.response_line.starts_with("220") {
-            return Ok(response);
+        if !response.starts_with("220") {
+            return Ok(Response::new(response, None));
         }
 
-        let rest = self.stream.read_to_terminal()?;
-        response.rest.replace(rest);
+        let header = self.stream.read_to_terminal()?;
+        let header = String::from_utf8(header)?;
 
-        Ok(response)
+        Ok(Response::new(response, Some(header)))
     }
 
     pub fn xfeature_compress_gzip(&mut self) -> Result<Response, NNTPError> {
         self.stream
-            .write_all(&format!("XFEATURE COMPRESS GZIP *\r\n")[..])
-            .unwrap();
+            .write_all(&format!("XFEATURE COMPRESS GZIP *\r\n")[..])?;
 
-        let mut response = self.read_response()?;
+        let response_line = self.read_response_line()?;
 
         // If it's not a 220, we shouldn't bother reading the rest
-        if !response.response_line.starts_with("220") {
-            return Err(NNTPError::UnexpectedCode(
-                response.response_line[0..2].to_string(),
-            ));
+        if !response_line.starts_with("220") {
+            return Err(NNTPError::UnexpectedCode(response_line[0..2].to_string()));
         }
 
-        self.stream.gzip = true;
+        self.stream.set_gzip();
 
-        let rest = self.stream.read_to_terminal()?;
-        response.rest.replace(rest);
+        let header = self.stream.read_to_terminal()?;
+        let header = String::from_utf8(header)?;
 
-        Ok(response)
+        Ok(Response::new(response_line, Some(header)))
     }
 
     /// Retrieves the headers of the article id.
@@ -296,53 +280,50 @@ impl<W: Read + Write> Client<W> {
     }
 
     pub fn head_by_id_read_pipeline(&mut self) -> Result<Response, NNTPError> {
-        let mut response = self.read_response()?;
+        let response = self.read_response_line()?;
 
         // If it's not a 100, we shouldn't bother reading the rest
-        if !(response.response_line.starts_with("100") || response.response_line.starts_with("221"))
-        {
+        if !(response.starts_with("100") || response.starts_with("221")) {
             //            panic!("no me gusta `{}`", response.response_line);
-            return Ok(response);
+            return Ok(Response::new(response, None));
         }
 
-        let rest = self.stream.read_to_terminal_noisey()?;
-        response.rest.replace(rest);
+        let header = self.stream.read_to_terminal_noisey()?;
+        let header = String::from_utf8(header)?;
 
-        Ok(response)
+        Ok(Response::new(response, Some(header)))
     }
 
     pub fn xzhdr_by_id_read_pipeline(&mut self) -> Result<Response, NNTPError> {
-        let mut response = self.read_response()?;
+        let response = self.read_response_line()?;
         println!("response: {:#?}", response);
 
         // If it's not a 100, we shouldn't bother reading the rest
-        if !(response.response_line.starts_with("100") || response.response_line.starts_with("221"))
-        {
+        if !(response.starts_with("100") || response.starts_with("221")) {
             //            panic!("no me gusta `{}`", response.response_line);
-            return Ok(response);
+            return Ok(Response::new(response, None));
         }
 
-        let rest = self.stream.read_to_terminal_noisey()?;
-        response.rest.replace(rest);
+        let header = self.stream.read_to_terminal_noisey()?;
+        let header = String::from_utf8(header)?;
 
-        Ok(response)
+        Ok(Response::new(response, Some(header)))
     }
 
     pub fn xhdr_by_id_read_pipeline(&mut self) -> Result<Response, NNTPError> {
-        let mut response = self.read_response()?;
+        let response = self.read_response_line()?;
         println!("response: {:#?}", response);
 
         // If it's not a 100, we shouldn't bother reading the rest
-        if !(response.response_line.starts_with("100") || response.response_line.starts_with("221"))
-        {
+        if !(response.starts_with("100") || response.starts_with("221")) {
             //            panic!("no me gusta `{}`", response.response_line);
-            return Ok(response);
+            return Ok(Response::new(response, None));
         }
 
-        let rest = self.stream.read_to_terminal_noisey()?;
-        response.rest.replace(rest);
+        let header = self.stream.read_to_terminal_noisey()?;
+        let header = String::from_utf8(header)?;
 
-        Ok(response)
+        Ok(Response::new(response, Some(header)))
     }
 }
 

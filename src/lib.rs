@@ -1,3 +1,5 @@
+#![feature(try_trait)]
+
 extern crate bufstream;
 extern crate native_tls;
 #[macro_use]

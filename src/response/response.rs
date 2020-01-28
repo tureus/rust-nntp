@@ -1,24 +1,24 @@
 use std::fmt::{Debug, Formatter};
 use std::io::{Error, ErrorKind, Result};
 
+use crate::response::Headers;
+
 pub struct Response {
-    pub response_line: String,
-    pub rest: Option<Vec<u8>>,
+    response_line: String,
+    headers: Option<String>,
 }
+
+const TRUNC_AT: usize = 1024 * 10;
 
 impl Debug for Response {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let rest = if let Some(ref rest) = self.rest {
-            if rest.len() >= 100 {
-                let leftover = rest.len() - 100;
-                let trunc = std::str::from_utf8(&rest[0..100]).unwrap();
+        let rest = if let Some(ref rest) = self.headers {
+            if rest.len() >= TRUNC_AT {
+                let leftover = rest.len() - TRUNC_AT;
+                let trunc = &rest[0..TRUNC_AT];
                 Some(format!("{}... ({} bytes truncated)", trunc, leftover))
             } else {
-                Some(
-                    std::str::from_utf8(&rest[0..rest.len()])
-                        .unwrap()
-                        .to_string(),
-                )
+                Some(rest[0..rest.len()].to_string())
             }
         } else {
             None
@@ -34,11 +34,23 @@ impl Debug for Response {
 const SUCCESS_CODES: [&'static str; 1] = ["221"];
 
 impl Response {
-    pub fn new(response_line: String, rest: Option<Vec<u8>>) -> Response {
+    pub fn new(response_line: String, headers: Option<String>) -> Response {
         Response {
             response_line,
-            rest,
+            headers,
         }
+    }
+
+    //    pub fn body(&self) -> Option<&String> {
+    //        self.headers.as_ref()
+    //    }
+
+    pub fn headers(&self) -> Option<Headers> {
+        self.headers.as_ref().map(|h| Headers::from(h.as_str()))
+    }
+
+    pub fn raw_headers(&self) -> Option<&String> {
+        self.headers.as_ref()
     }
 
     pub fn expected(&self, expected: &str) -> bool {
@@ -85,9 +97,10 @@ impl Response {
         }
     }
 
-    pub fn parse_header(&self) -> Result<Vec<(&[u8], &[u8])>> {
-        let subbuf = &self.rest.as_ref().unwrap()[0..100];
-        panic!("subbuf: {:?}", subbuf);
+    pub fn parse_headers(&self) -> Option<Headers> {
+        self.headers.as_ref().map(|r| Headers::from(&r[..]))
+        //        let subbuf = &self.rest.as_ref().unwrap()[0..100];
+        //        panic!("subbuf: {:?}", subbuf);
         //        unimplemented!()
     }
 }
