@@ -93,6 +93,10 @@ impl<W: Read + Write> Stream<W> {
         }
     }
 
+    pub fn bytes_read(&self) -> usize {
+        self.bytes_read
+    }
+
     pub fn gzip(&self) -> bool {
         self.gzip
     }

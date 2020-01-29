@@ -9,9 +9,13 @@ extern crate tokio;
 
 use nntp::capabilities::{Capability, Compression};
 
-use elasticsearch::http::request::JsonBody;
+use bytes::Buf;
+use elasticsearch::http::request::{JsonBody, NdBody};
 use elasticsearch::BulkParts;
 use nntp::prelude::*;
+use pretty_bytes::converter::convert;
+use serde_json::Value;
+use std::time::Instant;
 use tokio::prelude::*;
 
 #[tokio::main]
@@ -57,27 +61,30 @@ pub async fn main() -> Result<(), NNTPError> {
     client.discovery_capabilities()?;
     info!("client: {:#?}", client);
 
-    let chunk_size = 150;
+    let chunk_size = 2000;
     use itertools::Itertools;
     let chunks = &(low_water_mark..high_water_mark).chunks(chunk_size);
 
-    for chunk in chunks {
-        let mut docs: Vec<JsonBody<_>> = Vec::with_capacity(chunk_size * 2);
+    let mut before_bytes: usize = client.stream.bytes_read();
 
+    for chunk in chunks {
         let mut iter = chunk.into_iter();
         let first = iter.next().unwrap();
         let last = iter.last().unwrap();
         info!("{:?}-{:?}", first, last);
 
+        let inst = std::time::Instant::now();
         for id in first..=last {
             client.head_by_id_pipeline_write(id)?;
         }
         client.flush();
+        info!("writing out all HEAD statements {:?}", inst.elapsed());
+
+        let inst = Instant::now();
+        let mut docs: Vec<Value> = Vec::with_capacity(chunk_size * 2);
 
         for id in first..=last {
             let res = client.head_by_id_read_pipeline()?;
-            let doc_id = format!("{}-{}", group_name, id);
-            docs.push(json!({"index": {"_index": "index-00001", "_id": doc_id}}).into());
 
             let headers = match res.headers() {
                 Some(h) => h,
@@ -106,17 +113,40 @@ pub async fn main() -> Result<(), NNTPError> {
                 ),
                 Ok(d) => d,
             };
-            docs.push(doc.into());
+
+            let doc_id = format!("{}-{}", group_name, id);
+            docs.push(json!({"index": {"_id": doc_id}}).into());
+            docs.push(doc);
         }
+
+        info!(
+            "reading all HEAD responses took {:?} ({} read)",
+            inst.elapsed(),
+            convert((client.stream.bytes_read() - before_bytes) as f64)
+        );
+        before_bytes = client.stream.bytes_read();
 
         let inst = std::time::Instant::now();
         let res = elastic_client
-            .bulk(BulkParts::Index("usenet"))
-            .body(docs)
+            .bulk(BulkParts::Index("index-00001"))
+            .body(docs.into_iter().map(|x| JsonBody::new(x)).collect())
             .send()
             .await;
         if res.is_err() {
             error!("bulk index failed {}", res.err().unwrap())
+        } else {
+            let response = res.unwrap();
+            let body = response.read_body::<Value>().await.unwrap();
+            if body["status"].as_u64() == Some(400) {
+                panic!("elasticsearch is unhappy\n{:#?}", body);
+            }
+
+            let has_errors = body["errors"].as_bool();
+            if has_errors == Some(true) {
+                error!("encountered errors while indexing");
+            } else {
+                error!("no errors, whew");
+            }
         }
         info!("bulk index done {:?}", inst.elapsed());
     }
