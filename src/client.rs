@@ -30,7 +30,7 @@ macro_rules! simple_command_and_check_code {
 
             let response_line = self.read_response_line();
 
-            let line: Result<String, NNTPError> = match response_line {
+            let _line: Result<String, NNTPError> = match response_line {
                 Ok(resp) => {
                     if !resp.starts_with($code) {
                         println!("expected {}, got {}", $code, &resp[0..3])
@@ -78,44 +78,42 @@ impl<W: Read + Write> Client<W> {
         self.stream.read_response_line()
     }
 
-    #[allow(unreachable_code)]
-    pub fn discovery_capabilities(&mut self) -> Result<(), NNTPError> {
-        self.stream.write_all(CAPABILITIES)?;
-        //        let mut response = self.read_response()?;
-        let response_line = self.read_response_line()?;
-        assert_eq!(&response_line[0..3], "101");
-
-        let body = self.stream.read_to_terminal()?;
-        let body = String::from_utf8(body)?;
-
-        let response = Response::new(response_line, Some(body));
-
-        use std::str::from_utf8;
-
-        let output = [0u8; 8 * 1024];
-        let rest = if self.stream.gzip() {
-            let rest: String = unimplemented!("hmm");
-
-            let mut decompressor = flate2::Decompress::new(true);
-            let _flat_response = decompressor
-                .decompress(rest.as_bytes(), &mut output[..], FlushDecompress::None)
-                .expect("hello deflation");
-
-            debug!("total out: {}", decompressor.total_out());
-
-            from_utf8(&output[0..decompressor.total_out() as usize])
-                .expect("valid utf8 for gzipped capabilities")
-        } else {
-            //            response.body().unwrap()
-            response.raw_headers()?
-        };
-
-        let caps: Vec<Capability> = rest.lines().map(|x| x.into()).collect();
-
-        self.capabilities.replace(caps);
-
-        Ok(())
-    }
+    // #[allow(unreachable_code)]
+    // pub fn discovery_capabilities(&mut self) -> Result<(), NNTPError> {
+    //     self.stream.write_all(CAPABILITIES)?;
+    //     //        let mut response = self.read_response()?;
+    //     let response_line = self.read_response_line()?;
+    //     assert_eq!(&response_line[0..3], "101");
+    //
+    //     let body = self.stream.read_to_terminal()?;
+    //     let body = String::from_utf8(body)?;
+    //
+    //     let response = Response::new(response_line, Some(body));
+    //
+    //     use std::str::from_utf8;
+    //
+    //     let output = [0u8; 8 * 1024];
+    //     let rest = if self.stream.gzip() {
+    //         let mut decompressor = flate2::Decompress::new(true);
+    //         let _flat_response = decompressor
+    //             .decompress(rest.as_bytes(), &mut output[..], FlushDecompress::None)
+    //             .expect("hello deflation");
+    //
+    //         debug!("total out: {}", decompressor.total_out());
+    //
+    //         from_utf8(&output[0..decompressor.total_out() as usize])
+    //             .expect("valid utf8 for gzipped capabilities")
+    //     } else {
+    //         //            response.body().unwrap()
+    //         response.raw_headers()?
+    //     };
+    //
+    //     let caps: Vec<Capability> = rest.lines().map(|x| x.into()).collect();
+    //
+    //     self.capabilities.replace(caps);
+    //
+    //     Ok(())
+    // }
 
     pub fn can(&self, ask_cap: Capability) -> bool {
         if let Some(ref caps) = self.capabilities {
