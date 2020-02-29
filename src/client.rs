@@ -25,28 +25,28 @@ const NEXT: &'static str = "NEXT\r\n";
 
 macro_rules! simple_command_and_check_code {
     ($fnname:ident, $command:expr, $code:expr) => {
-        pub fn $fnname (&mut self) -> Result<String, NNTPError> {
+        pub fn $fnname(&mut self) -> Result<String, NNTPError> {
             self.stream.write_all($command)?;
 
             let response_line = self.read_response_line();
 
-            let line: Result<String,NNTPError> = match response_line {
+            let line: Result<String, NNTPError> = match response_line {
                 Ok(resp) => {
                     if !resp.starts_with($code) {
                         println!("expected {}, got {}", $code, &resp[0..3])
                     }
                     Ok(resp)
-                },
+                }
                 Err(e) => {
                     panic!("got {:?}", e);
                 }
             };
 
             let rest = self.stream.read_to_terminal().unwrap();
-            unimplemented!("rest: {}", String::from_utf8(rest).unwrap());
-            Ok("hi".to_string())
+            let rest = String::from_utf8(rest)?;
+            Ok(rest)
         }
-    }
+    };
 }
 
 #[allow(unused_macros)]

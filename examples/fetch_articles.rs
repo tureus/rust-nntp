@@ -6,7 +6,7 @@ use nntp::{NNTPStream, ParsedArticle};
 use prettytable::Table;
 
 fn main() -> Result<(), std::io::Error> {
-    let buf_stream = NNTPStream::tls_buf_stream("nntp.aioe.org", 119)?;
+    let buf_stream = nntp::tls_buf_stream("nntp.aioe.org", 119)?;
     let mut nntp_stream = NNTPStream::connect(buf_stream)?;
 
     let lines = nntp_stream.capabilities()?;
@@ -27,7 +27,7 @@ fn main() -> Result<(), std::io::Error> {
     let article = nntp_stream.article_by_number(20000)?;
     let ParsedArticle { headers, body, .. } = article.parse()?;
     let mut table = Table::new();
-    for (key, value) in headers.iter() {
+    for (key, value) in headers.headers.iter() {
         table.add_row(row![key, value]);
     }
     table.printstd();
@@ -38,7 +38,7 @@ fn main() -> Result<(), std::io::Error> {
     let article = nntp_stream.article_by_id("<a55pbedl7rf6sr0h1d9bf37q5qpj0rgn5j@4ax.com>")?;
     let ParsedArticle { headers, body, .. } = article.parse()?;
     let mut table = Table::new();
-    for (key, value) in headers.iter() {
+    for (key, value) in headers.headers.iter() {
         table.add_row(row![key, value]);
     }
     table.printstd();

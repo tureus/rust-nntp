@@ -9,8 +9,8 @@ extern crate tokio;
 
 use nntp::capabilities::{Capability, Compression};
 
-use bytes::Buf;
-use elasticsearch::http::request::{JsonBody, NdBody};
+
+use elasticsearch::http::request::{JsonBody};
 use elasticsearch::BulkParts;
 use nntp::prelude::*;
 use pretty_bytes::converter::convert;
@@ -21,7 +21,7 @@ use tokio::prelude::*;
 #[tokio::main]
 pub async fn main() -> Result<(), NNTPError> {
     env_logger::init();
-    let mut elastic_client = elasticsearch::Elasticsearch::default();
+    let elastic_client = elasticsearch::Elasticsearch::default();
 
     let mut client = Client::connect_tls("us.newsgroupdirect.com", 563, 32 * 1024)?;
     //    let mut client = Client::connect("nntp.aioe.org", 119)?;
