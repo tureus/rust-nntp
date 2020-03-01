@@ -1,4 +1,4 @@
-#[derive(Debug,PartialEq)]
+#[derive(Debug, PartialEq)]
 #[allow(non_camel_case_types)]
 pub enum Capability {
     VERSION_1,
@@ -32,7 +32,7 @@ pub enum Capability {
 
 impl From<&str> for Capability {
     fn from(incoming: &str) -> Self {
-        let parts : Vec<&str> = incoming.split(" ").collect();
+        let parts: Vec<&str> = incoming.split(' ').collect();
         if parts.len() == 1 {
             match parts[0] {
                 "NEWNEWS" => Capability::NEWNEWS,
@@ -45,59 +45,56 @@ impl From<&str> for Capability {
                 "XZVER" => Capability::XZVER,
                 "XZHDR" => Capability::XZHDR,
                 "HDR" => Capability::HDR,
-                _ => Capability::OTHER(parts.iter().map(|&x| x.to_owned()).collect())
+                _ => Capability::OTHER(parts.iter().map(|&x| x.to_owned()).collect()),
             }
-        } else if parts.len() == 2{
+        } else if parts.len() == 2 {
             match (parts[0], parts[1]) {
                 ("VERSION", "1") => Capability::VERSION_1,
                 ("VERSION", "2") => Capability::VERSION_2,
                 ("VERSION", version) => Capability::VERSION(version.into()),
                 ("AUTHINFO", auth) => Capability::AUTHINFO(auth.into()),
-                (cmd, arg) => Capability::OTHER(vec![cmd.into(), arg.into()])
+                (cmd, arg) => Capability::OTHER(vec![cmd.into(), arg.into()]),
             }
+        } else if parts[0] == "LIST" {
+            let rest = &parts[1..];
+            Capability::LIST(rest.iter().map(|&x| x.to_owned()).collect())
+        } else if parts[0] == "XFEATURE-COMPRESS" {
+            let rest = &parts[1..];
+            Capability::XFEATURE_COMPRESS(rest.iter().map(|&x| x.into()).collect())
         } else {
-            if parts[0] == "LIST" {
-                let rest = &parts[1..];
-                Capability::LIST(rest.iter().map(|&x| x.to_owned()).collect())
-            } else if parts[0] == "XFEATURE-COMPRESS" {
-                let rest = &parts[1..];
-                Capability::XFEATURE_COMPRESS(rest.iter().map(|&x| x.into()).collect())
-            } else {
-                Capability::OTHER(parts.iter().map(|&x| x.to_owned()).collect())
-            }
+            Capability::OTHER(parts.iter().map(|&x| x.to_owned()).collect())
         }
 
-//        match incoming {
-//            "VERSION" => Capabilities::VERSION 2
-//                "IMPLEMENTATION" => Capabilities::IMPLEMENTATION INN 2.5.4
-//                "AUTHINFO" => Capabilities::AUTHINFO SASL
-//            "HDR" => Capabilities::HDR
-//            "LIST" => Capabilities::LIST
-//            "ACTIVE" => Capabilities::ACTIVE
-//            "COUNTS" => Capabilities::COUNTS
-//            "DISTRIBUTIONS" => Capabilities::DISTRIBUTIONS
-//            "HEADERS" => Capabilities::HEADERS
-//            "MODERATORS" => Capabilities::MODERATORS
-//            "MOTD" => Capabilities::MOTD
-//            "NEWSGROUPS" => Capabilities::NEWSGROUPS
-//            "SUBSCRIPTIONS" => Capabilities::SUBSCRIPTIONS
-//            "NEWNEWS" => Capabilities::NEWNEWS
-//            "OVER" => Capabilities::OVER
-//            "POST" => Capabilities::POST
-//            "READER" => Capabilities::READER
-//            "SASL" => Capabilities::SASL DIGEST-MD5 NTLM CRAM-MD5
-//            "STARTTLS" => Capabilities::STARTTLS
-//            _ => Capability::Other
-//        }
+        //        match incoming {
+        //            "VERSION" => Capabilities::VERSION 2
+        //                "IMPLEMENTATION" => Capabilities::IMPLEMENTATION INN 2.5.4
+        //                "AUTHINFO" => Capabilities::AUTHINFO SASL
+        //            "HDR" => Capabilities::HDR
+        //            "LIST" => Capabilities::LIST
+        //            "ACTIVE" => Capabilities::ACTIVE
+        //            "COUNTS" => Capabilities::COUNTS
+        //            "DISTRIBUTIONS" => Capabilities::DISTRIBUTIONS
+        //            "HEADERS" => Capabilities::HEADERS
+        //            "MODERATORS" => Capabilities::MODERATORS
+        //            "MOTD" => Capabilities::MOTD
+        //            "NEWSGROUPS" => Capabilities::NEWSGROUPS
+        //            "SUBSCRIPTIONS" => Capabilities::SUBSCRIPTIONS
+        //            "NEWNEWS" => Capabilities::NEWNEWS
+        //            "OVER" => Capabilities::OVER
+        //            "POST" => Capabilities::POST
+        //            "READER" => Capabilities::READER
+        //            "SASL" => Capabilities::SASL DIGEST-MD5 NTLM CRAM-MD5
+        //            "STARTTLS" => Capabilities::STARTTLS
+        //            _ => Capability::Other
+        //        }
     }
 }
 
-
-#[derive(Debug,PartialEq)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub enum Compression {
     GZIP,
     TERMINATOR,
-    OTHER(String)
+    OTHER(String),
 }
 
 impl From<&str> for Compression {

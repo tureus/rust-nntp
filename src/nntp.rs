@@ -1,30 +1,30 @@
 use bufstream::BufStream;
 use prettytable::Table;
 
-use std::io::{Error, ErrorKind, Read, Result, Write, BufRead};
+use native_tls::TlsStream;
+use std::io::{BufRead, Error, ErrorKind, Read, Result, Write};
 use std::net::TcpStream;
-use std::net::ToSocketAddrs;
 use std::str::FromStr;
 use std::string::String;
 use std::vec::Vec;
 
 /// Commands
-const LIST: &'static [u8; 6] = b"LIST\r\n";
-const CAPABILITIES: &'static [u8; 14] = b"CAPABILITIES\r\n";
-const ARTICLE: &'static [u8; 9] = b"ARTICLE\r\n";
-const BODY: &'static [u8; 6] = b"BODY\r\n";
-const DATE: &'static [u8; 6] = b"DATE\r\n";
-const HEAD: &'static [u8; 6] = b"HEAD\r\n";
-const LAST: &'static [u8; 6] = b"LAST\r\n";
-const QUIT: &'static [u8; 6] = b"QUIT\r\n";
-const HELP: &'static [u8; 6] = b"HELP\r\n";
-const NEXT: &'static [u8; 6] = b"NEXT\r\n";
-const POST: &'static [u8; 6] = b"POST\r\n";
-const STAT: &'static [u8; 6] = b"STAT\r\n";
-const ARTICLE_END : &'static [u8; 3] = b".\r\n";
+const LIST: &[u8; 6] = b"LIST\r\n";
+const CAPABILITIES: &[u8; 14] = b"CAPABILITIES\r\n";
+const ARTICLE: &[u8; 9] = b"ARTICLE\r\n";
+const BODY: &[u8; 6] = b"BODY\r\n";
+const DATE: &[u8; 6] = b"DATE\r\n";
+const HEAD: &[u8; 6] = b"HEAD\r\n";
+const LAST: &[u8; 6] = b"LAST\r\n";
+const QUIT: &[u8; 6] = b"QUIT\r\n";
+const HELP: &[u8; 6] = b"HELP\r\n";
+const NEXT: &[u8; 6] = b"NEXT\r\n";
+const POST: &[u8; 6] = b"POST\r\n";
+const STAT: &[u8; 6] = b"STAT\r\n";
+const ARTICLE_END: &[u8; 3] = b".\r\n";
 
 pub struct Article {
-    pub buf: Vec<u8>
+    pub buf: Vec<u8>,
 }
 
 impl<'a> Article {
@@ -40,17 +40,14 @@ pub struct ParsedArticle<'a> {
 
 impl<'a> ParsedArticle<'a> {
     pub fn from_buffer(buf: &[u8]) -> Result<ParsedArticle> {
-        let (headers,buf) = ParsedHeaders::from_buffer(buf)?;
+        let (headers, buf) = ParsedHeaders::from_buffer(buf)?;
 
-        Ok(ParsedArticle {
-            headers,
-            body: buf
-        })
+        Ok(ParsedArticle { headers, body: buf })
     }
 }
 
 pub struct Headers {
-    buf: Vec<u8>
+    buf: Vec<u8>,
 }
 
 impl Headers {
@@ -59,7 +56,7 @@ impl Headers {
     }
 
     pub fn parse(&self) -> Result<ParsedHeaders> {
-        ParsedHeaders::from_buffer(&self.buf[..]).map(|(h,b)| h)
+        ParsedHeaders::from_buffer(&self.buf[..]).map(|(h, _)| h)
     }
 }
 
@@ -71,13 +68,13 @@ pub struct ParsedHeaders<'a> {
 
 impl<'a> std::fmt::Debug for ParsedHeaders<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "code: {}, message: {}\n", self.code, self.message)?;
+        writeln!(f, "code: {}, message: {}", self.code, self.message)?;
         let mut table = Table::new();
-        for (k,v) in self.headers.iter() {
+        for (k, v) in self.headers.iter() {
             if v.len() < 50 {
-                table.add_row(row![k,v]);
+                table.add_row(row![k, v]);
             } else {
-                table.add_row(row![k, format!("{}...", &v[0..50]) ]);
+                table.add_row(row![k, format!("{}...", &v[0..50])]);
             }
         }
         table.printstd();
@@ -87,11 +84,11 @@ impl<'a> std::fmt::Debug for ParsedHeaders<'a> {
 
 impl<'a> ParsedHeaders<'a> {
     pub fn from_buffer(buf: &[u8]) -> Result<(ParsedHeaders, &[u8])> {
-        let mut buf = &buf[..];
-        let mut headers : Vec<(&str,&str)> = Vec::with_capacity(15);
+        let buf = &buf[..];
+        let mut headers: Vec<(&str, &str)> = Vec::with_capacity(15);
 
         // snag response line
-        let ((code,message), mut buf) = match ParsedHeaders::consume_line(buf) {
+        let ((code, message), mut buf) = match ParsedHeaders::consume_line(buf) {
             (line, Some(rest)) => (ParsedHeaders::parse_response(line)?, rest),
             (_, None) => return Err(Error::new(ErrorKind::Other, "failed to consume a line")),
         };
@@ -99,52 +96,61 @@ impl<'a> ParsedHeaders<'a> {
         while let (line, Some(rest)) = ParsedHeaders::consume_line(buf) {
             buf = rest;
 
-            if line.len() == 0 {
-                break
+            if line.is_empty() {
+                break;
             }
 
-            match line.iter().position(|&x| x == b':') {
-                Some(pos) => {
-                    headers.push((
-                        std::str::from_utf8(&line[0..pos]).expect("header key is not valid UTF8"),
-                        std::str::from_utf8(&line[pos+2..]).expect("header value is not valid UTF8")
-                    ));
-                },
-                None => {},
+            if let Some(pos) = line.iter().position(|&x| x == b':') {
+                headers.push((
+                    std::str::from_utf8(&line[0..pos]).expect("header key is not valid UTF8"),
+                    std::str::from_utf8(&line[pos + 2..]).expect("header value is not valid UTF8"),
+                ));
             }
         }
 
-        Ok((ParsedHeaders { headers, code, message }, buf))
+        Ok((
+            ParsedHeaders {
+                headers,
+                code,
+                message,
+            },
+            buf,
+        ))
     }
 
     fn consume_line(buffer: &[u8]) -> (&[u8], Option<&[u8]>) {
         let mut windows = buffer.windows(2).enumerate();
-        let found = windows.find(|(window_index, search)| {
-            search == b"\r\n"
-        });
+        let found = windows.find(|(_window_index, search)| search == b"\r\n");
         match found {
-            Some((offset, slice)) => {
+            Some((offset, _slice)) => {
                 let line = &buffer[0..offset];
                 if offset > buffer.len() {
                     (line, None)
                 } else {
-                    (line, Some(&buffer[offset+2..]))
+                    (line, Some(&buffer[offset + 2..]))
                 }
-            },
-            _ => {
-                (buffer, None)
             }
+            _ => (buffer, None),
         }
     }
 
-    fn parse_response(response: &[u8]) -> Result<(isize,&str)> {
-        let (code,message) = match response.iter().position(|&x| x == b' ') {
+    fn parse_response(response: &[u8]) -> Result<(isize, &str)> {
+        let (code, message) = match response.iter().position(|&x| x == b' ') {
             Some(pos) => response.split_at(pos),
-            None => return Err(Error::new(ErrorKind::Other, "could not find a space in the response line")),
+            None => {
+                return Err(Error::new(
+                    ErrorKind::Other,
+                    "could not find a space in the response line",
+                ))
+            }
         };
 
-        let code: isize = FromStr::from_str(std::str::from_utf8(code).expect("bad UTF8 for code")).map_err(|_| Error::new(ErrorKind::Other, "failed to parse response code"))?;
-        Ok((code, std::str::from_utf8(&message[1..]).expect("message is not valid UTF8")))
+        let code: isize = FromStr::from_str(std::str::from_utf8(code).expect("bad UTF8 for code"))
+            .map_err(|_| Error::new(ErrorKind::Other, "failed to parse response code"))?;
+        Ok((
+            code,
+            std::str::from_utf8(&message[1..]).expect("message is not valid UTF8"),
+        ))
     }
 }
 
@@ -162,10 +168,10 @@ impl NewsGroup {
         let trimmed_group = group.trim_matches(chars_to_trim);
         let split_group: Vec<&str> = trimmed_group.split(' ').collect();
         NewsGroup {
-            name: format!("{}", split_group[0]),
+            name: split_group[0].to_string(),
             high: FromStr::from_str(split_group[1]).unwrap(),
             low: FromStr::from_str(split_group[2]).unwrap(),
-            status: format!("{}", split_group[3]),
+            status: split_group[3].to_string(),
         }
     }
 }
@@ -177,14 +183,26 @@ pub struct NNTPStream<W: Read + Write> {
 
 /// Response owns the blob returned by the server,
 /// including unparsed response, headers, body
+#[allow(dead_code)]
 pub struct NNTPMessage {
-    buf: Vec<u8>
+    buf: Vec<u8>,
 }
 
 impl NNTPMessage {
-    pub fn parse(&self) -> (isize,&[u8],Option<&[u8]>,Option<&[u8]>) {
+    #[allow(clippy::type_complexity)]
+    pub fn parse(&self) -> (isize, &[u8], Option<&[u8]>, Option<&[u8]>) {
         unimplemented!("bang")
     }
+}
+
+pub fn tls_buf_stream(hostname: &str, port: u16) -> Result<BufStream<TlsStream<TcpStream>>> {
+    let tcp_stream = std::net::TcpStream::connect((hostname, port))?;
+
+    let connector = native_tls::TlsConnector::new().unwrap();
+    let stream = connector
+        .connect(hostname, tcp_stream)
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "tls failed"))?;
+    Ok(BufStream::new(stream))
 }
 
 impl<W: Read + Write> NNTPStream<W> {
@@ -220,11 +238,9 @@ impl<W: Read + Write> NNTPStream<W> {
 
         let buf = self.read_article_buffer()?;
 
-        let mut article = Article {
-            buf,
-        };
+        let article = Article { buf };
 
-        article.parse();
+        article.parse().expect("parse article");
 
         Ok(article)
     }
@@ -235,28 +251,33 @@ impl<W: Read + Write> NNTPStream<W> {
 
         loop {
             match self.stream.read(&mut buffer[bytes_read..]) {
-                Ok(0) => {
-                    panic!("empty read")
-                },
+                Ok(0) => panic!("empty read"),
                 Ok(bytes) => {
                     bytes_read += bytes;
                     println!("got {} bytes", bytes);
-                    println!("buff: {}", std::str::from_utf8(&buffer[0..bytes_read]).unwrap());
+                    println!(
+                        "buff: {}",
+                        std::str::from_utf8(&buffer[0..bytes_read]).unwrap()
+                    );
 
-                    if &buffer[bytes_read-3..bytes_read] == ARTICLE_END {
+                    if &buffer[bytes_read - 3..bytes_read] == ARTICLE_END {
                         // Don't pass on the rest of 0'd data, skip the ARTICLE_END
-                        buffer.truncate(bytes_read-3);
-                        break
+                        buffer.truncate(bytes_read - 3);
+                        break;
                     } else if buffer.len() == bytes_read {
                         // we gotta resize this buffer
                         let new_cap = buffer.capacity() * 2;
                         buffer.resize(new_cap, 0);
                         println!("read_article_buffer is resizing!")
                     }
-                },
-                Err(_) => return Err(Error::new(ErrorKind::Other, "trouble reading the whole article")),
+                }
+                Err(_) => {
+                    return Err(Error::new(
+                        ErrorKind::Other,
+                        "trouble reading the whole article",
+                    ))
+                }
             }
-
         }
 
         Ok(buffer)
@@ -323,7 +344,7 @@ impl<W: Read + Write> NNTPStream<W> {
 
         let buf = self.read_article_buffer()?;
 
-        Ok(Headers{ buf })
+        Ok(Headers { buf })
     }
 
     /// Moves the currently selected article number back one
@@ -345,7 +366,7 @@ impl<W: Read + Write> NNTPStream<W> {
                     .iter()
                     .map(|ref mut x| NewsGroup::new_news_group(*x))
                     .collect();
-                return Ok(lines);
+                Ok(lines)
             }
             Err(e) => Err(e),
         }
@@ -403,9 +424,10 @@ impl<W: Read + Write> NNTPStream<W> {
         time: &str,
         use_gmt: bool,
     ) -> Result<Vec<String>> {
-        let newnews_command = match use_gmt {
-            true => format!("NEWNEWS {} {} {} GMT\r\n", wildmat, date, time),
-            false => format!("NEWNEWS {} {} {}\r\n", wildmat, date, time),
+        let newnews_command = if use_gmt {
+            format!("NEWNEWS {} {} {} GMT\r\n", wildmat, date, time)
+        } else {
+            format!("NEWNEWS {} {} {}\r\n", wildmat, date, time)
         };
 
         self.write_all(newnews_command.as_bytes())?;
@@ -415,6 +437,7 @@ impl<W: Read + Write> NNTPStream<W> {
         self.read_buffered_multiline_response()
     }
 
+    #[allow(clippy::should_implement_trait)]
     /// Moves the currently selected article number forward one
     pub fn next(&mut self) -> Result<String> {
         self.write_all(NEXT)?;
@@ -464,7 +487,7 @@ impl<W: Read + Write> NNTPStream<W> {
     pub fn authinfo_pass(&mut self, pass: &str) -> Result<String> {
         self.write_all(&format!("AUTHINFO PASS {}\r\n", pass).as_bytes()[..])?;
 
-        self.read_response(281).map(|(_code,message)| message)
+        self.read_response(281).map(|(_code, message)| message)
     }
 
     fn write_all(&mut self, buf: &[u8]) -> Result<()> {
@@ -489,17 +512,17 @@ impl<W: Read + Write> NNTPStream<W> {
         let message_bytes = message_string.as_bytes();
         let length = message_string.len();
 
-        return length >= 5
+        length >= 5
             && (message_bytes[length - 1] == lf
                 && message_bytes[length - 2] == cr
                 && message_bytes[length - 3] == dot
                 && message_bytes[length - 4] == lf
-                && message_bytes[length - 5] == cr);
+                && message_bytes[length - 5] == cr)
     }
 
     //Retrieve single line response
     fn read_response(&mut self, expected_code: isize) -> Result<(isize, String)> {
-//        println!("reading a new response...");
+        //        println!("reading a new response...");
         //Carriage return
         let cr: u8 = b'\r';
         //Line Feed
@@ -519,7 +542,7 @@ impl<W: Read + Write> NNTPStream<W> {
             line_buffer.push(byte_buffer[0]);
         }
 
-//        println!("done reading response from socket...");
+        //        println!("done reading response from socket...");
 
         let response = String::from_utf8(line_buffer).unwrap();
         let chars_to_trim: &[char] = &['\r', '\n'];
@@ -533,7 +556,7 @@ impl<W: Read + Write> NNTPStream<W> {
         let message = v[1];
         if code != expected_code {
             panic!("expected {}, got {}", expected_code, code);
-            return Err(Error::new(ErrorKind::Other, "Invalid response"));
+            //            return Err(Error::new(ErrorKind::Other, "Invalid response"));
         }
 
         Ok((code, message.to_string()))
@@ -547,12 +570,8 @@ impl<W: Read + Write> NNTPStream<W> {
 
         for line in lines_iter {
             match line {
-                Ok(l) => {
-                    output.push(unsafe { String::from_utf8_unchecked(l) })
-                },
-                Err(_) => {
-                    return Err(Error::new(ErrorKind::Other, "problem reading lines"))
-                },
+                Ok(l) => output.push(unsafe { String::from_utf8_unchecked(l) }),
+                Err(_) => return Err(Error::new(ErrorKind::Other, "problem reading lines")),
             }
         }
 
@@ -578,11 +597,9 @@ impl<'a, W: Read + Write> Iterator for NNTPLines<'a, W> {
                 } else {
                     Some(Ok(l.as_bytes().to_owned()))
                 }
-            },
-            Some(Err(_)) => {
-                Some(Err(Error::new(ErrorKind::Other, "problem reading line")))
-            },
-            None => None
+            }
+            Some(Err(_)) => Some(Err(Error::new(ErrorKind::Other, "problem reading line"))),
+            None => None,
         }
     }
 }
