@@ -199,7 +199,7 @@ impl NNTPMessage {
 }
 
 pub fn tls_buf_stream(hostname: &str, port: u16) -> Result<BufStream<TlsStream<TcpStream>>> {
-    let mut tcp_stream = std::net::TcpStream::connect((hostname, port))?;
+    let tcp_stream = std::net::TcpStream::connect((hostname, port))?;
 
     let connector = native_tls::TlsConnector::new().unwrap();
     let stream = connector

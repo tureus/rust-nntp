@@ -7,19 +7,19 @@ extern crate bufstream;
 #[allow(unused_imports)]
 use std::collections::HashMap;
 
-use nntp::{NNTPStream, NewsGroup, ParsedArticle};
+use nntp::{NNTPStream, NewsGroup};
 #[allow(unused_imports)]
 use prettytable::Table;
 
 use bufstream::BufStream;
 
 fn main() -> Result<(), std::io::Error> {
-    let mut tcp_stream = std::net::TcpStream::connect(("us.newsgroupdirect.com", 563))?;
+    let tcp_stream = std::net::TcpStream::connect(("us.newsgroupdirect.com", 563))?;
 
     let connector = native_tls::TlsConnector::new().unwrap();
     let stream = connector
         .connect("us.newsgroupdirect.com", tcp_stream)
-        .map_err(|x| std::io::Error::new(std::io::ErrorKind::Other, "tls failed"))?;
+        .map_err(|_x| std::io::Error::new(std::io::ErrorKind::Other, "tls failed"))?;
     let stream = BufStream::new(stream);
     let mut nntp_stream = NNTPStream::connect(stream)?;
 
@@ -31,7 +31,7 @@ fn main() -> Result<(), std::io::Error> {
     nntp_stream.authinfo_user(envmap.get("NEWSGROUP_USER").expect("newsgroup user"))?;
     nntp_stream.authinfo_pass(envmap.get("NEWSGROUP_PASS").expect("newsgroup pass"))?;
 
-    let cap = nntp_stream.capabilities()?;
+    let _cap = nntp_stream.capabilities()?;
     // panic!("cap (after AUTH): {:#?}", cap);
 
     let groups = nntp_stream.list()?;
@@ -48,7 +48,7 @@ fn main() -> Result<(), std::io::Error> {
     t.printstd();
     //
     nntp_stream.group(GROUP)?;
-    let article = nntp_stream.article()?;
+    let _article = nntp_stream.article()?;
     let stat = nntp_stream.stat()?;
     panic!("stat: {}", stat);
     //    let article = nntp_stream.article_by_number(3269684000).unwrap();
