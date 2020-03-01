@@ -24,7 +24,7 @@ fn main() -> Result<(), std::io::Error> {
     let mut nntp_stream = NNTPStream::connect(stream)?;
 
     //    let GROUP = "comp.sys.raspberry-pi";
-    let GROUP = "alt.binaries.warez";
+    let group = "alt.binaries.warez";
 
     use std::env;
     let envmap: HashMap<String, String> = env::vars().collect();
@@ -38,7 +38,7 @@ fn main() -> Result<(), std::io::Error> {
     let groups_by_name: HashMap<&str, &NewsGroup> =
         groups.iter().map(|x| (&x.name[..], x)).collect();
 
-    let g = *groups_by_name.get(GROUP).unwrap();
+    let g = *groups_by_name.get(group).unwrap();
     println!("the g: {:#?}", g);
 
     let mut t = Table::new();
@@ -47,10 +47,9 @@ fn main() -> Result<(), std::io::Error> {
     }
     t.printstd();
     //
-    nntp_stream.group(GROUP)?;
+    nntp_stream.group(group)?;
     let _article = nntp_stream.article()?;
-    let stat = nntp_stream.stat()?;
-    panic!("stat: {}", stat);
+    let _stat = nntp_stream.stat()?;
     //    let article = nntp_stream.article_by_number(3269684000).unwrap();
     //    let article = article.parse()?;
     //    let mut t = Table::new();
