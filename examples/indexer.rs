@@ -4,24 +4,21 @@ use std::collections::HashMap;
 extern crate log;
 #[macro_use]
 extern crate serde_json;
-#[macro_use]
 extern crate tokio;
 
 use nntp::capabilities::{Capability, Compression};
 
-use bytes::Buf;
-use elasticsearch::http::request::{JsonBody, NdBody};
+use elasticsearch::http::request::JsonBody;
 use elasticsearch::BulkParts;
 use nntp::prelude::*;
 use pretty_bytes::converter::convert;
 use serde_json::Value;
 use std::time::Instant;
-use tokio::prelude::*;
 
 #[tokio::main]
 pub async fn main() -> Result<(), NNTPError> {
     env_logger::init();
-    let mut elastic_client = elasticsearch::Elasticsearch::default();
+    let elastic_client = elasticsearch::Elasticsearch::default();
 
     let mut client = Client::connect_tls("us.newsgroupdirect.com", 563, 32 * 1024)?;
     //    let mut client = Client::connect("nntp.aioe.org", 119)?;
@@ -77,7 +74,7 @@ pub async fn main() -> Result<(), NNTPError> {
         for id in first..=last {
             client.head_by_id_pipeline_write(id)?;
         }
-        client.flush();
+        client.flush().unwrap();
         info!("writing out all HEAD statements {:?}", inst.elapsed());
 
         let inst = Instant::now();

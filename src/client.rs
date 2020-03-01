@@ -9,44 +9,46 @@ use super::capabilities::Capability;
 use super::response::Response;
 use super::stream::Stream;
 
-const LIST: &'static str = "LIST\r\n";
-const CAPABILITIES: &'static str = "CAPABILITIES\r\n";
+use flate2::{Decompress, FlushDecompress};
+
+const LIST: &str = "LIST\r\n";
+const CAPABILITIES: &str = "CAPABILITIES\r\n";
 //const ARTICLE: &'static [u8; 9] = b"ARTICLE\r\n";
 //const BODY: &'static [u8; 6] = b"BODY\r\n";
 //const DATE: &'static [u8; 6] = b"DATE\r\n";
-const HEAD: &'static str = "HEAD\r\n";
-const LAST: &'static str = "LAST\r\n";
-const QUIT: &'static str = "QUIT\r\n";
+const HEAD: &str = "HEAD\r\n";
+const LAST: &str = "LAST\r\n";
+const QUIT: &str = "QUIT\r\n";
 //const HELP: &'static [u8; 6] = b"HELP\r\n";
-const NEXT: &'static str = "NEXT\r\n";
+const NEXT: &str = "NEXT\r\n";
 //const POST: &'static [u8; 6] = b"POST\r\n";
 //const STAT: &'static [u8; 6] = b"STAT\r\n";
 //const ARTICLE_END : &'static [u8; 3] = b".\r\n";
 
 macro_rules! simple_command_and_check_code {
     ($fnname:ident, $command:expr, $code:expr) => {
-        pub fn $fnname (&mut self) -> Result<String, NNTPError> {
+        pub fn $fnname(&mut self) -> Result<String, NNTPError> {
             self.stream.write_all($command)?;
 
             let response_line = self.read_response_line();
 
-            let line: Result<String,NNTPError> = match response_line {
+            let _line: Result<String, NNTPError> = match response_line {
                 Ok(resp) => {
                     if !resp.starts_with($code) {
                         println!("expected {}, got {}", $code, &resp[0..3])
                     }
                     Ok(resp)
-                },
+                }
                 Err(e) => {
                     panic!("got {:?}", e);
                 }
             };
 
             let rest = self.stream.read_to_terminal().unwrap();
-            unimplemented!("rest: {}", String::from_utf8(rest).unwrap());
-            Ok("hi".to_string())
+            let rest = String::from_utf8(rest)?;
+            Ok(rest)
         }
-    }
+    };
 }
 
 #[allow(unused_macros)]
@@ -78,6 +80,7 @@ impl<W: Read + Write> Client<W> {
         self.stream.read_response_line()
     }
 
+    /// Ask for CAPABILITIES and use response to replace this client's capabilities map
     #[allow(unreachable_code)]
     pub fn discovery_capabilities(&mut self) -> Result<(), NNTPError> {
         self.stream.write_all(CAPABILITIES)?;
@@ -86,28 +89,21 @@ impl<W: Read + Write> Client<W> {
         assert_eq!(&response_line[0..3], "101");
 
         let body = self.stream.read_to_terminal()?;
-        let body = String::from_utf8(body)?;
 
-        let response = Response::new(response_line, Some(body));
-
-        use std::str::from_utf8;
-
-        let output = [0u8; 8 * 1024];
         let rest = if self.stream.gzip() {
-            let rest: String = unimplemented!("hmm");
+            let mut decompressor = Decompress::new(true);
 
-            let mut decompressor = flate2::Decompress::new(true);
+            let mut decompress_buffer = Vec::with_capacity(10 * body.len());
             let _flat_response = decompressor
-                .decompress(rest.as_bytes(), &mut output[..], FlushDecompress::None)
+                .decompress_vec(&body[..], &mut decompress_buffer, FlushDecompress::None)
                 .expect("hello deflation");
 
             debug!("total out: {}", decompressor.total_out());
 
-            from_utf8(&output[0..decompressor.total_out() as usize])
-                .expect("valid utf8 for gzipped capabilities")
+            decompress_buffer.truncate(decompressor.total_out() as usize);
+            String::from_utf8(decompress_buffer).expect("valid utf8 for gzipped capabilities")
         } else {
-            //            response.body().unwrap()
-            response.raw_headers()?
+            String::from_utf8(body).expect("valid utf8 for capabilities")
         };
 
         let caps: Vec<Capability> = rest.lines().map(|x| x.into()).collect();
@@ -127,7 +123,7 @@ impl<W: Read + Write> Client<W> {
                         return ask_set.is_subset(&set);
                     }
                 }
-                return false;
+                false
             } else {
                 caps.contains(&ask_cap)
             }
@@ -156,7 +152,7 @@ impl<W: Read + Write> Client<W> {
     simple_command_and_check_code!(head, HEAD, "205");
     simple_command_and_check_code!(quit, QUIT, "205");
     simple_command_and_check_code!(list, LIST, "215");
-    simple_command_and_check_code!(next, NEXT, "223");
+    simple_command_and_check_code!(_next, NEXT, "223");
     simple_command_and_check_code!(last, LAST, "205");
 
     /// Selects a newsgroup
@@ -177,7 +173,7 @@ impl<W: Read + Write> Client<W> {
 
     /// Lists articles in a group, you probably don't want this
     pub fn listgroup(&mut self) -> Result<Response, NNTPError> {
-        self.stream.write_all(&format!("LISTGROUP\r\n")[..])?;
+        self.stream.write_all("LISTGROUP\r\n")?;
 
         let response = self.read_response_line()?;
         info!("listgroup response line `{}`", response);
@@ -213,7 +209,7 @@ impl<W: Read + Write> Client<W> {
     pub fn article_by_id_pipeline_write(&mut self, id: usize) -> Result<(), NNTPError> {
         self.stream
             .write_all(&format!("ARTICLE {}\r\n", id)[..])
-            .map_err(|e| e.into())
+            .map_err(|e| e)
     }
 
     pub fn article_by_id_pipeline_read(&mut self) -> Result<Response, NNTPError> {
@@ -231,8 +227,7 @@ impl<W: Read + Write> Client<W> {
     }
 
     pub fn xfeature_compress_gzip(&mut self) -> Result<Response, NNTPError> {
-        self.stream
-            .write_all(&format!("XFEATURE COMPRESS GZIP *\r\n")[..])?;
+        self.stream.write_all("XFEATURE COMPRESS GZIP *\r\n")?;
 
         let response_line = self.read_response_line()?;
 
@@ -258,7 +253,7 @@ impl<W: Read + Write> Client<W> {
     pub fn head_by_id_pipeline_write(&mut self, article_id: usize) -> Result<(), NNTPError> {
         self.stream
             .write_all_buffered(&format!("HEAD {}\r\n", article_id)[..])
-            .map_err(|e| e.into())
+            .map_err(|e| e)
     }
 
     pub fn head_by_range_pipeline_write(
@@ -267,7 +262,7 @@ impl<W: Read + Write> Client<W> {
     ) -> Result<(), NNTPError> {
         self.stream
             .write_all(&format!("HEAD {}-{}\r\n", articles.start, articles.end)[..])
-            .map_err(|e| e.into())
+            .map_err(|e| e)
     }
 
     pub fn xhdr_by_range_pipeline_write(
@@ -343,7 +338,6 @@ impl<W: Read + Write> Client<W> {
     }
 }
 
-use flate2::FlushDecompress;
 use std::collections::HashSet;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 
