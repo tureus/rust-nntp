@@ -5,17 +5,17 @@ impl<'a> From<&'a str> for Headers<'a> {
         let map = parse_multiline_header(headers.as_bytes())
             .iter()
             .map(|x| {
-                let mut parts = x.splitn(2, |x| *x == ':' as u8);
+                let mut parts = x.splitn(2, |x| *x == b':');
                 let key = parts.next().unwrap();
                 let value = parts.next().map(|x| {
                     let mut start = 0;
                     let mut end = x.len();
 
-                    if x.len() >= 1 && x[0] == ' ' as u8 {
+                    if !x.is_empty() && x[0] == b' ' {
                         start = 1;
                     }
 
-                    if x.len() >= 2 && &x[x.len() - 2..=x.len() - 1] == &b"\r\n"[..] {
+                    if x.len() >= 2 && x[x.len() - 2..x.len()] == b"\r\n"[..] {
                         end = x.len() - 2;
                     }
 
@@ -68,7 +68,7 @@ fn parse_multiline_header(input: &[u8]) -> Vec<&[u8]> {
             end += *pos.as_ref().unwrap() + 2;
             if end >= input.len() {
                 break;
-            } else if input[end] == ' ' as u8 || input[end] == '\t' as u8 {
+            } else if input[end] == b' ' || input[end] == b'\t' {
                 //                println!("hit a CRLF+space... {:?}", end);
                 end -= 1;
                 continue;

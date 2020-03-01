@@ -32,7 +32,7 @@ pub enum Capability {
 
 impl From<&str> for Capability {
     fn from(incoming: &str) -> Self {
-        let parts: Vec<&str> = incoming.split(" ").collect();
+        let parts: Vec<&str> = incoming.split(' ').collect();
         if parts.len() == 1 {
             match parts[0] {
                 "NEWNEWS" => Capability::NEWNEWS,
@@ -55,16 +55,14 @@ impl From<&str> for Capability {
                 ("AUTHINFO", auth) => Capability::AUTHINFO(auth.into()),
                 (cmd, arg) => Capability::OTHER(vec![cmd.into(), arg.into()]),
             }
+        } else if parts[0] == "LIST" {
+            let rest = &parts[1..];
+            Capability::LIST(rest.iter().map(|&x| x.to_owned()).collect())
+        } else if parts[0] == "XFEATURE-COMPRESS" {
+            let rest = &parts[1..];
+            Capability::XFEATURE_COMPRESS(rest.iter().map(|&x| x.into()).collect())
         } else {
-            if parts[0] == "LIST" {
-                let rest = &parts[1..];
-                Capability::LIST(rest.iter().map(|&x| x.to_owned()).collect())
-            } else if parts[0] == "XFEATURE-COMPRESS" {
-                let rest = &parts[1..];
-                Capability::XFEATURE_COMPRESS(rest.iter().map(|&x| x.into()).collect())
-            } else {
-                Capability::OTHER(parts.iter().map(|&x| x.to_owned()).collect())
-            }
+            Capability::OTHER(parts.iter().map(|&x| x.to_owned()).collect())
         }
 
         //        match incoming {
